@@ -1,0 +1,6 @@
+{
+  "name": "Momentum Fusion Scanner",
+  "description": "A premium market analysis tool that scans financial markets and identifies high-quality momentum structures by comparing price trends, RSI momentum, and moving averages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
