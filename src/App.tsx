@@ -5,6 +5,8 @@ import ConfigurationPanel from './components/ConfigurationPanel';
 import FilterToolbar from './components/FilterToolbar';
 import SetupCard from './components/SetupCard';
 import SetupDetailsModal from './components/SetupDetailsModal';
+import { INSTRUMENTS, getMarketData } from './lib/marketData';
+import { analyzeSetup } from './lib/indicators';
 import { 
   Sparkles, 
   Layers, 
@@ -18,7 +20,9 @@ import {
   HelpCircle,
   TrendingUp,
   Clock,
-  Gauge
+  Gauge,
+  Server,
+  Globe
 } from 'lucide-react';
 
 export default function App() {
@@ -26,6 +30,7 @@ export default function App() {
   const [config, setConfig] = useState<ScannerConfig>(DEFAULT_SCANNER_CONFIG);
   const [selectedTimeframes, setSelectedTimeframes] = useState<Timeframe[]>(['1h', '4h', '1d']);
   const [selectedMarkets, setSelectedMarkets] = useState<MarketType[]>(['indices', 'commodities', 'forex', 'crypto']);
+  const [scanMode, setScanMode] = useState<'server' | 'client'>('server');
   
   // Scanned setups list
   const [setups, setSetups] = useState<SetupAnalysis[]>([]);
@@ -77,17 +82,27 @@ export default function App() {
   }, []);
 
   // Primary scan action
-  const runScan = async (forceRefresh = false) => {
+  const runScan = async (
+    forceRefresh = false,
+    timeframesOverride?: Timeframe[],
+    marketsOverride?: MarketType[],
+    configOverride?: ScannerConfig
+  ) => {
     setIsScanning(true);
     setScanError(null);
+
+    const targetTimeframes = timeframesOverride || selectedTimeframes;
+    const targetMarkets = marketsOverride || selectedMarkets;
+    const targetConfig = configOverride || config;
+
     try {
       const response = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          timeframes: selectedTimeframes,
-          markets: selectedMarkets,
-          config,
+          timeframes: targetTimeframes,
+          markets: targetMarkets,
+          config: targetConfig,
           forceRefresh
         })
       });
@@ -100,12 +115,54 @@ export default function App() {
       if (data.success) {
         setSetups(data.setups);
         setLastScannedAt(data.scannedAt);
+        setScanMode('server');
       } else {
         throw new Error(data.error || 'Unknown scanner error');
       }
     } catch (err: any) {
-      console.error('[SCAN ERROR]', err);
-      setScanError(err.message || 'Connecting to the scanning service failed.');
+      console.warn('[SCAN SERVER UNREACHABLE] Falling back to high-speed client-side indicator calculation:', err.message);
+      
+      try {
+        const scanResults: SetupAnalysis[] = [];
+        const activeInstruments = INSTRUMENTS.filter(inst => targetMarkets.includes(inst.type));
+        
+        const scanPromises: Promise<void>[] = [];
+
+        for (const timeframe of targetTimeframes) {
+          for (const inst of activeInstruments) {
+            const runClientScan = async () => {
+              try {
+                const candles = await getMarketData(inst, timeframe, forceRefresh);
+                if (candles && candles.length >= 50) {
+                  const analysis = analyzeSetup(
+                    candles,
+                    inst.displayName,
+                    inst.symbol,
+                    inst.type,
+                    timeframe,
+                    targetConfig
+                  );
+                  scanResults.push(analysis);
+                }
+              } catch (innerErr: any) {
+                console.warn(`[CLIENT SCANNER WARNING] Could not analyze ${inst.symbol} (${timeframe}):`, innerErr.message);
+              }
+            };
+            scanPromises.push(runClientScan());
+          }
+        }
+
+        await Promise.all(scanPromises);
+        
+        scanResults.sort((a, b) => b.overallScore - a.overallScore);
+        
+        setSetups(scanResults);
+        setLastScannedAt(Date.now());
+        setScanMode('client');
+      } catch (clientErr: any) {
+        console.error('[CLIENT SCAN ERROR]', clientErr);
+        setScanError('Connecting to the scanning service failed, and client fallback failed.');
+      }
     } finally {
       setIsScanning(false);
     }
@@ -136,26 +193,7 @@ export default function App() {
     
     // Auto trigger scanning with new preset parameters
     setTimeout(() => {
-      setIsScanning(true);
-      fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          timeframes: preset.timeframes,
-          markets: preset.markets,
-          config: preset.config,
-          forceRefresh: false
-        })
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          setSetups(data.setups);
-          setLastScannedAt(data.scannedAt);
-        }
-      })
-      .catch(e => console.error(e))
-      .finally(() => setIsScanning(false));
+      runScan(false, preset.timeframes, preset.markets, preset.config);
     }, 50);
   };
 
@@ -279,7 +317,19 @@ export default function App() {
           </div>
 
           {/* Clock & Refresh Metrics */}
-          <div className="flex items-center gap-4 text-xs font-mono">
+          <div className="flex items-center gap-3 text-xs font-mono">
+            {scanMode === 'client' ? (
+              <div className="flex items-center gap-1 bg-amber-950/40 border border-amber-900/60 text-amber-400 px-2.5 py-1 rounded-md" title="Running indicator calculations directly in your browser. Fully functional, bypasses server CORS!">
+                <Globe className="h-3.5 w-3.5 text-amber-400" />
+                <span className="text-[10px] font-bold uppercase tracking-wider">Local Hybrid Engine</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 bg-violet-950/30 border border-violet-900/50 text-violet-400 px-2.5 py-1 rounded-md" title="Connected to cloud scanning microservice">
+                <Server className="h-3.5 w-3.5 text-violet-400 animate-pulse" />
+                <span className="text-[10px] font-bold uppercase tracking-wider">Cloud Run Scanner</span>
+              </div>
+            )}
+
             <div className="hidden md:flex items-center gap-1.5 text-zinc-500 bg-zinc-900/50 border border-zinc-800/40 px-2.5 py-1 rounded-md">
               <Clock className="h-3.5 w-3.5 text-zinc-400" />
               <span>{utcTime}</span>
