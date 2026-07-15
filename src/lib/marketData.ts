@@ -158,23 +158,57 @@ async function fetchBinanceKlines(symbol: string, timeframe: Timeframe): Promise
   }));
 }
 
+// Helper to fetch with resilient CORS proxies on the client-side
+async function fetchWithProxy(targetUrl: string, isBrowser: boolean): Promise<Response> {
+  if (!isBrowser) {
+    return fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+      }
+    });
+  }
+
+  // List of highly reliable public CORS proxies
+  const proxies = [
+    (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u: string) => `https://thingproxy.freeboard.io/fetch/${u}`
+  ];
+
+  let lastError: any = null;
+  for (const getProxyUrl of proxies) {
+    try {
+      const proxyUrl = getProxyUrl(targetUrl);
+      console.log(`[CORS PROXY] Attempting client-side fetch via: ${proxyUrl}`);
+      const response = await fetch(proxyUrl);
+      if (response.ok) {
+        console.log(`[CORS PROXY] Successfully fetched via: ${proxyUrl}`);
+        return response;
+      }
+      console.warn(`[CORS PROXY] Failed with status ${response.status} for: ${proxyUrl}`);
+    } catch (err: any) {
+      console.warn(`[CORS PROXY] Network error trying proxy:`, err.message || err);
+      lastError = err;
+    }
+  }
+
+  // Final fallback: try fetching directly (will likely fail CORS but acts as a last resort)
+  console.warn(`[CORS PROXY] All proxies failed. Trying direct client-side fetch...`);
+  return fetch(targetUrl);
+}
+
 // Fetch from Yahoo Finance
 async function fetchYahooFinance(yahooSymbol: string, timeframe: Timeframe): Promise<Candle[]> {
   const params = getYahooParams(timeframe);
   const encodedSymbol = encodeURIComponent(yahooSymbol);
   
-  // Set some backup CORS proxies or alternative endpoints just in case,
-  // but query1.finance.yahoo.com is fully accessible directly from Node.js
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedSymbol}?interval=${params.interval}&range=${params.range}`;
+  const isBrowser = typeof window !== 'undefined';
   
-  console.log(`[DATA PROVIDER] Fetching Yahoo Finance for ${yahooSymbol} (${timeframe}): ${url}`);
+  console.log(`[DATA PROVIDER] Fetching Yahoo Finance for ${yahooSymbol} (${timeframe})`);
 
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'application/json'
-    }
-  });
+  const response = await fetchWithProxy(url, isBrowser);
 
   if (!response.ok) {
     throw new Error(`Yahoo Finance error: ${response.status} ${response.statusText}`);
@@ -322,20 +356,11 @@ export async function getMarketData(instrument: Instrument, timeframe: Timeframe
       console.log(`[DATA PROVIDER] Successfully fetched ${instrument.symbol} via Binance`);
       return candles;
     } catch (e) {
-      console.warn(`[DATA PROVIDER] Binance fetch failed for ${instrument.symbol}, falling back to simulation:`, e);
+      console.warn(`[DATA PROVIDER] Binance fetch failed for ${instrument.symbol}, falling back to Yahoo Finance:`, e);
     }
   }
 
-  // If in the browser, direct Yahoo Finance calls will fail with CORS issues.
-  // We elegantly bypass this by returning beautiful high-fidelity simulated candles instantly.
-  if (isBrowser && instrument.type !== 'crypto') {
-    const candles = generateSimulatedCandles(instrument.symbol, timeframe);
-    marketCache[cacheKey] = { candles, lastFetched: now };
-    console.log(`[DATA PROVIDER] Client-side: Generated high-fidelity simulated candles for ${instrument.symbol} (${timeframe}) to bypass browser CORS`);
-    return candles;
-  }
-
-  // Fetch via Yahoo Finance (on server side)
+  // Fetch via Yahoo Finance (both on client and server side, with CORS-proxy bypass on client)
   try {
     const candles = await fetchYahooFinance(instrument.yahooSymbol, timeframe);
     marketCache[cacheKey] = { candles, lastFetched: now };
