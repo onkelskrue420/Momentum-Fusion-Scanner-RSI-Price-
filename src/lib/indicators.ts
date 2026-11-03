@@ -96,6 +96,51 @@ export function calculateRMA(values: number[], period: number): (number | null)[
   return result;
 }
 
+export function calculateStreak(
+  series: (number | null)[],
+  maSeries: (number | null)[],
+  lastIdx: number
+): { streak: number; direction: 'above' | 'below' | 'neutral' } {
+  if (lastIdx < 0 || maSeries[lastIdx] == null || series[lastIdx] == null) {
+    return { streak: 0, direction: 'neutral' };
+  }
+
+  const currentVal = series[lastIdx]!;
+  const currentMa = maSeries[lastIdx]!;
+
+  if (currentVal === currentMa) {
+    return { streak: 0, direction: 'neutral' };
+  }
+
+  const isAbove = currentVal > currentMa;
+  let count = 0;
+
+  for (let i = lastIdx; i >= 0; i--) {
+    const val = series[i];
+    const ma = maSeries[i];
+    if (val == null || ma == null) break;
+
+    if (isAbove) {
+      if (val > ma) {
+        count++;
+      } else {
+        break;
+      }
+    } else {
+      if (val < ma) {
+        count++;
+      } else {
+        break;
+      }
+    }
+  }
+
+  return {
+    streak: count,
+    direction: isAbove ? 'above' : 'below'
+  };
+}
+
 export function calculateMA(values: number[], period: number, type: MAType): (number | null)[] {
   switch (type) {
     case 'SMA': return calculateSMA(values, period);
@@ -248,9 +293,14 @@ export function analyzeSetup(
   // Take last 50 points for gallery visualization
   const showCount = Math.min(len, 60);
   for (let i = len - showCount; i < len; i++) {
+    const candle = candles[i];
     displayPoints.push({
       timestamp: timestamps[i],
       price: closes[i],
+      open: candle ? candle.open : closes[i],
+      high: candle ? candle.high : closes[i],
+      low: candle ? candle.low : closes[i],
+      close: candle ? candle.close : closes[i],
       priceMA1: priceMA1[i],
       priceMA2: priceMA2[i],
       rsi: rsiRaw[i],
@@ -462,7 +512,13 @@ export function analyzeSetup(
   } else {
     setupQualityDesc = 'Noisy Market - Do Not Trade';
   }
-  
+
+  // Calculate Moving Average Respect Streaks (consecutive candles respecting MA)
+  const p1Streak = calculateStreak(closes, priceMA1, lastIndex);
+  const p2Streak = calculateStreak(closes, priceMA2, lastIndex);
+  const r1Streak = calculateStreak(rsiRaw, rsiMA1, lastIndex);
+  const r2Streak = calculateStreak(rsiRaw, rsiMA2, lastIndex);
+
   return {
     symbol,
     displayName,
@@ -480,6 +536,14 @@ export function analyzeSetup(
     priceTrendDesc,
     rsiTrendDesc,
     setupQualityDesc,
-    dataPoints: displayPoints
+    dataPoints: displayPoints,
+    priceMa1Streak: p1Streak.streak,
+    priceMa1StreakDir: p1Streak.direction,
+    priceMa2Streak: p2Streak.streak,
+    priceMa2StreakDir: p2Streak.direction,
+    rsiMa1Streak: r1Streak.streak,
+    rsiMa1StreakDir: r1Streak.direction,
+    rsiMa2Streak: r2Streak.streak,
+    rsiMa2StreakDir: r2Streak.direction
   };
 }

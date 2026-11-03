@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { SetupAnalysis } from '../types';
 import SparklineChart from './SparklineChart';
-import { TrendingUp, TrendingDown, Eye, RefreshCw, Zap, Columns, Rows } from 'lucide-react';
+import { TrendingUp, TrendingDown, Eye, RefreshCw, Zap, Columns, Rows, Star, Clock } from 'lucide-react';
+import { getMarketActivity } from '../utils/timeFormat';
 
 interface SetupCardProps {
   key?: string;
@@ -9,27 +10,32 @@ interface SetupCardProps {
   onClick: () => void;
   rsiLength?: number;
   globalStacked?: boolean;
+  isStarred?: boolean;
+  onToggleStar?: (e: React.MouseEvent) => void;
 }
 
-export default function SetupCard({ setup, onClick, rsiLength, globalStacked }: SetupCardProps) {
-  // Shared hover state to synchronize vertical crosshairs on the price and RSI sparklines
+export default function SetupCard({ setup, onClick, rsiLength, globalStacked, isStarred, onToggleStar }: SetupCardProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
   const [isStacked, setIsStacked] = useState(false);
+  const [now, setNow] = useState<number>(Date.now());
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(max-width: 640px)');
-    setIsMobile(mediaQuery.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
+    const handleResize = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   useEffect(() => {
-    if (globalStacked !== undefined) {
-      setIsStacked(globalStacked);
-    }
-  }, [globalStacked]);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const lastCandleTimestamp = setup.dataPoints && setup.dataPoints.length > 0 
+    ? setup.dataPoints[setup.dataPoints.length - 1].timestamp 
+    : undefined;
+
+  const marketInfo = getMarketActivity(lastCandleTimestamp, setup.timeframe, now);
 
   const chartHeight = isMobile 
     ? (isStacked ? 120 : 175) 
@@ -133,6 +139,39 @@ export default function SetupCard({ setup, onClick, rsiLength, globalStacked }: 
             <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
               {getTimeframeLabel(setup.timeframe)}
             </span>
+            {marketInfo.isMarketOpen ? (
+              <span
+                className="flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.5 rounded font-bold"
+                title={`Live Market • Last bar: ${marketInfo.lastCandleTimeStr} (${marketInfo.elapsedStr})`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                LIVE
+              </span>
+            ) : (
+              <span
+                className="flex items-center gap-1 text-[9px] font-mono text-amber-400 bg-amber-950/60 border border-amber-500/30 px-1.5 py-0.5 rounded font-bold"
+                title={`Market Closed / Idle • Last bar: ${marketInfo.lastCandleTimeStr} (${marketInfo.elapsedStr})`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+                CLOSED
+              </span>
+            )}
+            {onToggleStar && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleStar(e);
+                }}
+                className={`p-1 rounded transition ${
+                  isStarred
+                    ? 'text-amber-400 hover:text-amber-300'
+                    : 'text-zinc-600 hover:text-zinc-300'
+                }`}
+                title={isStarred ? 'Remove from Watchlist' : 'Add to Watchlist'}
+              >
+                <Star className={`h-4 w-4 ${isStarred ? 'fill-amber-400' : ''}`} />
+              </button>
+            )}
           </div>
           <span className="text-[11px] text-zinc-500 mt-0.5 block truncate">
             {setup.displayName} • {getAssetLabel(setup.type)}
@@ -166,6 +205,20 @@ export default function SetupCard({ setup, onClick, rsiLength, globalStacked }: 
             {setup.setupQualityDesc}
           </span>
         </div>
+
+        {setup.priceMa1Streak !== undefined && (
+          <div className="flex items-center justify-between text-[11px] font-mono border-t border-zinc-900/60 pt-2">
+            <span className="text-zinc-500 font-sans">MA Respect Streak:</span>
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <span className="bg-zinc-900 border border-zinc-800 text-amber-300 px-1.5 py-0.5 rounded font-bold" title="Price MA1 Respect Streak (consecutive candles respecting MA1)">
+                Price: {setup.priceMa1Streak} {setup.priceMa1StreakDir === 'above' ? '↑' : setup.priceMa1StreakDir === 'below' ? '↓' : '—'}
+              </span>
+              <span className="bg-zinc-900 border border-zinc-800 text-violet-300 px-1.5 py-0.5 rounded font-bold" title="RSI MA1 Respect Streak (consecutive candles respecting RSI MA1)">
+                RSI: {setup.rsiMa1Streak} {setup.rsiMa1StreakDir === 'above' ? '↑' : setup.rsiMa1StreakDir === 'below' ? '↓' : '—'}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* LOCAL LAYOUT TOGGLE & LABEL */}
@@ -241,11 +294,20 @@ export default function SetupCard({ setup, onClick, rsiLength, globalStacked }: 
       </div>
 
       {/* BOTTOM METADATA BAR CHART AND LINK BUTTONS */}
-      <div className="border-t border-zinc-900/80 pt-3 flex items-center justify-between">
-        <span className="text-[10px] text-zinc-600 font-mono flex items-center gap-1">
-          <RefreshCw className="h-2.5 w-2.5 animate-pulse" />
-          Updated {Math.round((Date.now() - setup.lastUpdated) / 1000)}s ago
-        </span>
+      <div className="border-t border-zinc-900/80 pt-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-[10px] font-mono text-zinc-400">
+          <Clock className="h-3 w-3 text-zinc-500 flex-shrink-0" />
+          <span className="truncate max-w-[150px] sm:max-w-[200px]">
+            Bar: <strong className="text-zinc-200">{marketInfo.lastCandleTimeStr}</strong>
+          </span>
+          <span className={`px-1 py-0.2 rounded text-[9px] border font-bold ${
+            marketInfo.isMarketOpen
+              ? 'bg-emerald-950/50 text-emerald-300 border-emerald-500/30'
+              : 'bg-amber-950/50 text-amber-300 border-amber-500/30'
+          }`}>
+            {marketInfo.elapsedStr}
+          </span>
+        </div>
         
         {/* CTA Hover button */}
         <span className="text-xs font-semibold text-violet-500 group-hover:text-violet-400 transition-colors flex items-center gap-1 font-mono">

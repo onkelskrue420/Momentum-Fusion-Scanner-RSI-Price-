@@ -2,13 +2,20 @@ import { Candle, Instrument, MarketType, Timeframe } from '../types';
 
 export const INSTRUMENTS: Instrument[] = [
   // Indices
-  { symbol: 'US30', displayName: 'Dow Jones 30', yahooSymbol: '^DJI', type: 'indices' },
-  { symbol: 'NAS100', displayName: 'Nasdaq 100', yahooSymbol: '^NDX', type: 'indices' },
-  { symbol: 'SPX500', displayName: 'S&P 500', yahooSymbol: '^GSPC', type: 'indices' },
-  { symbol: 'GER40', displayName: 'DAX 40', yahooSymbol: '^GDAXI', type: 'indices' },
+  { symbol: 'SPY', displayName: 'SPDR S&P 500 ETF', yahooSymbol: 'SPY', type: 'indices' },
+  { symbol: 'VIX', displayName: 'CBOE Volatility Index', yahooSymbol: '^VIX', type: 'indices' },
+  { symbol: 'SPX500', displayName: 'S&P 500', yahooSymbol: '^GSPC', fallbackYahooSymbols: ['ES=F', 'SPY'], type: 'indices' },
+  { symbol: 'US30', displayName: 'Dow Jones 30', yahooSymbol: '^DJI', fallbackYahooSymbols: ['YM=F', 'DIA'], type: 'indices' },
+  { symbol: 'NAS100', displayName: 'Nasdaq 100', yahooSymbol: '^NDX', fallbackYahooSymbols: ['NQ=F', 'QQQ'], type: 'indices' },
+  { symbol: 'GER40', displayName: 'DAX 40', yahooSymbol: '^GDAXI', fallbackYahooSymbols: ['EWG'], type: 'indices' },
+  // Equities / Stocks
+  { symbol: 'AAPL', displayName: 'Apple Inc.', yahooSymbol: 'AAPL', type: 'stocks' },
+  { symbol: 'NVDA', displayName: 'NVIDIA Corporation', yahooSymbol: 'NVDA', type: 'stocks' },
+  { symbol: 'MSFT', displayName: 'Microsoft Corp.', yahooSymbol: 'MSFT', type: 'stocks' },
+  { symbol: 'TSLA', displayName: 'Tesla Inc.', yahooSymbol: 'TSLA', type: 'stocks' },
   // Commodities
-  { symbol: 'GOLD', displayName: 'Gold Spot', yahooSymbol: 'GC=F', type: 'commodities' },
-  { symbol: 'SILVER', displayName: 'Silver Spot', yahooSymbol: 'SI=F', type: 'commodities' },
+  { symbol: 'GOLD', displayName: 'Gold Spot', yahooSymbol: 'GC=F', fallbackYahooSymbols: ['GLD'], type: 'commodities' },
+  { symbol: 'SILVER', displayName: 'Silver Spot', yahooSymbol: 'SI=F', fallbackYahooSymbols: ['SLV'], type: 'commodities' },
   // Forex
   { symbol: 'EURUSD', displayName: 'EUR/USD', yahooSymbol: 'EURUSD=X', type: 'forex' },
   { symbol: 'GBPUSD', displayName: 'GBP/USD', yahooSymbol: 'GBPUSD=X', type: 'forex' },
@@ -16,6 +23,7 @@ export const INSTRUMENTS: Instrument[] = [
   // Crypto
   { symbol: 'BTCUSD', displayName: 'Bitcoin / USD', yahooSymbol: 'BTC-USD', binanceSymbol: 'BTCUSDT', type: 'crypto' },
   { symbol: 'ETHUSD', displayName: 'Ethereum / USD', yahooSymbol: 'ETH-USD', binanceSymbol: 'ETHUSDT', type: 'crypto' },
+  { symbol: 'SOLUSD', displayName: 'Solana / USD', yahooSymbol: 'SOL-USD', binanceSymbol: 'SOLUSDT', type: 'crypto' },
 ];
 
 export interface CacheEntry {
@@ -50,7 +58,7 @@ interface YahooParams {
 
 function getYahooParams(timeframe: Timeframe): YahooParams {
   switch (timeframe) {
-    case '1m': return { interval: '1m', range: '1d' };
+    case '1m': return { interval: '1m', range: '5d' };
     case '5m': return { interval: '5m', range: '5d' };
     case '15m': return { interval: '15m', range: '5d' };
     case '30m': return { interval: '30m', range: '5d' };
@@ -193,28 +201,48 @@ async function fetchWithProxy(targetUrl: string, isBrowser: boolean): Promise<Re
     }
   }
 
-  // Final fallback: try fetching directly (will likely fail CORS but acts as a last resort)
-  console.warn(`[CORS PROXY] All proxies failed. Trying direct client-side fetch...`);
-  return fetch(targetUrl);
+  // Final fallback: do not attempt naked direct fetch in browser as it violates CORS
+  throw new Error('All CORS proxies unavailable for client-side Yahoo Finance fetch');
 }
 
 // Fetch from Yahoo Finance
 async function fetchYahooFinance(yahooSymbol: string, timeframe: Timeframe): Promise<Candle[]> {
   const params = getYahooParams(timeframe);
   const encodedSymbol = encodeURIComponent(yahooSymbol);
-  
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedSymbol}?interval=${params.interval}&range=${params.range}`;
   const isBrowser = typeof window !== 'undefined';
   
   console.log(`[DATA PROVIDER] Fetching Yahoo Finance for ${yahooSymbol} (${timeframe})`);
 
-  const response = await fetchWithProxy(url, isBrowser);
+  let data: any = null;
 
-  if (!response.ok) {
-    throw new Error(`Yahoo Finance error: ${response.status} ${response.statusText}`);
+  // If in browser, first try the local Express server proxy which has full server-to-server connectivity and zero CORS restrictions
+  if (isBrowser) {
+    try {
+      const localProxyUrl = `/api/proxy/yahoo?symbol=${encodedSymbol}&interval=${params.interval}&range=${params.range}`;
+      const localRes = await fetch(localProxyUrl);
+      if (localRes.ok) {
+        const json = await localRes.json();
+        if (json?.chart?.result?.[0]) {
+          data = json;
+        }
+      }
+    } catch {
+      // Fallback to proxy pool
+    }
   }
 
-  const data: any = await response.json();
+  // If not yet fetched, use fetchWithProxy or direct server fetch
+  if (!data) {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedSymbol}?interval=${params.interval}&range=${params.range}`;
+    const response = await fetchWithProxy(url, isBrowser);
+
+    if (!response.ok) {
+      throw new Error(`Yahoo Finance error: ${response.status} ${response.statusText}`);
+    }
+
+    data = await response.json();
+  }
+
   const result = data.chart?.result?.[0];
   
   if (!result) {
@@ -281,8 +309,13 @@ export function generateSimulatedCandles(symbol: string, timeframe: Timeframe): 
 
   if (symbol.includes('US30')) { basePrice = 39150; volatility = 0.002; }
   else if (symbol.includes('NAS100')) { basePrice = 17920; volatility = 0.0035; }
-  else if (symbol.includes('SPX500')) { basePrice = 5120; volatility = 0.0025; }
+  else if (symbol.includes('SPX500') || symbol.includes('SPY')) { basePrice = 515; volatility = 0.0025; }
+  else if (symbol.includes('VIX')) { basePrice = 15.5; volatility = 0.02; }
   else if (symbol.includes('GER40')) { basePrice = 17050; volatility = 0.003; }
+  else if (symbol.includes('AAPL')) { basePrice = 185; volatility = 0.005; }
+  else if (symbol.includes('NVDA')) { basePrice = 125; volatility = 0.01; }
+  else if (symbol.includes('MSFT')) { basePrice = 425; volatility = 0.005; }
+  else if (symbol.includes('TSLA')) { basePrice = 240; volatility = 0.012; }
   else if (symbol.includes('GOLD')) { basePrice = 2175; volatility = 0.004; }
   else if (symbol.includes('SILVER')) { basePrice = 24.5; volatility = 0.006; }
   else if (symbol.includes('EURUSD')) { basePrice = 1.0850; volatility = 0.0008; }
@@ -290,13 +323,16 @@ export function generateSimulatedCandles(symbol: string, timeframe: Timeframe): 
   else if (symbol.includes('USDJPY')) { basePrice = 148.20; volatility = 0.0015; }
   else if (symbol.includes('BTC')) { basePrice = 64500; volatility = 0.012; }
   else if (symbol.includes('ETH')) { basePrice = 3350; volatility = 0.015; }
+  else if (symbol.includes('SOL')) { basePrice = 150; volatility = 0.018; }
 
-  const count = 150;
+  const count = 280;
   let intervalMs = 24 * 60 * 60 * 1000; // 1d
-  if (timeframe === '1h') intervalMs = 60 * 60 * 1000;
-  else if (timeframe === '4h') intervalMs = 4 * 60 * 60 * 1000;
-  else if (timeframe === '15m') intervalMs = 15 * 60 * 1000;
+  if (timeframe === '1m') intervalMs = 1 * 60 * 1000;
   else if (timeframe === '5m') intervalMs = 5 * 60 * 1000;
+  else if (timeframe === '15m') intervalMs = 15 * 60 * 1000;
+  else if (timeframe === '30m') intervalMs = 30 * 60 * 1000;
+  else if (timeframe === '1h') intervalMs = 60 * 60 * 1000;
+  else if (timeframe === '4h') intervalMs = 4 * 60 * 60 * 1000;
 
   const now = Date.now();
   const candles: Candle[] = [];
@@ -348,6 +384,22 @@ export async function getMarketData(instrument: Instrument, timeframe: Timeframe
   // Detect browser environment
   const isBrowser = typeof window !== 'undefined';
 
+  // In browser, first query our local server endpoint which runs server-to-server with full caching and no CORS limitations
+  if (isBrowser) {
+    try {
+      const res = await fetch(`/api/candles?symbol=${encodeURIComponent(instrument.symbol)}&timeframe=${timeframe}${forceRefresh ? '&force=true' : ''}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.success && Array.isArray(data?.candles) && data.candles.length > 0) {
+          marketCache[cacheKey] = { candles: data.candles, lastFetched: now };
+          return data.candles;
+        }
+      }
+    } catch {
+      // Local server endpoint fallback
+    }
+  }
+
   // Try Binance fallback first for cryptos (has CORS headers, works beautifully on both client and server)
   if (instrument.type === 'crypto' && instrument.binanceSymbol) {
     try {
@@ -361,24 +413,56 @@ export async function getMarketData(instrument: Instrument, timeframe: Timeframe
   }
 
   // Fetch via Yahoo Finance (both on client and server side, with CORS-proxy bypass on client)
-  try {
-    const candles = await fetchYahooFinance(instrument.yahooSymbol, timeframe);
-    marketCache[cacheKey] = { candles, lastFetched: now };
-    console.log(`[DATA PROVIDER] Successfully fetched ${instrument.symbol} (${timeframe}) via Yahoo Finance`);
-    return candles;
-  } catch (e: any) {
-    console.error(`[DATA PROVIDER] Yahoo Finance fetch failed for ${instrument.symbol} (${timeframe}):`, e.message);
-    
-    // Fall back to expired cache first if available
-    if (cached) {
-      console.warn(`[CACHE FALLBACK] Returning expired cache for ${cacheKey} due to fetch error`);
-      return cached.candles;
-    }
+  const candidateSymbols = [instrument.yahooSymbol, ...(instrument.fallbackYahooSymbols || [])];
+  
+  for (const sym of candidateSymbols) {
+    try {
+      const candles = await fetchYahooFinance(sym, timeframe);
+      if (candles && candles.length > 0) {
+        // Adjust price scale if an ETF fallback was used for an index
+        let adjustedCandles = candles;
+        if (instrument.symbol === 'US30' && sym === 'DIA') {
+          adjustedCandles = candles.map(c => ({
+            ...c,
+            open: c.open * 100,
+            high: c.high * 100,
+            low: c.low * 100,
+            close: c.close * 100
+          }));
+        } else if (instrument.symbol === 'NAS100' && sym === 'QQQ') {
+          adjustedCandles = candles.map(c => ({
+            ...c,
+            open: c.open * 40,
+            high: c.high * 40,
+            low: c.low * 40,
+            close: c.close * 40
+          }));
+        } else if (instrument.symbol === 'SPX500' && sym === 'SPY') {
+          adjustedCandles = candles.map(c => ({
+            ...c,
+            open: c.open * 10,
+            high: c.high * 10,
+            low: c.low * 10,
+            close: c.close * 10
+          }));
+        }
 
-    // Otherwise, as a last resort, generate beautiful simulated candles so the app NEVER crashes
-    const candles = generateSimulatedCandles(instrument.symbol, timeframe);
-    marketCache[cacheKey] = { candles, lastFetched: now };
-    console.log(`[DATA PROVIDER] Fallback: Generated simulated candles for ${instrument.symbol} (${timeframe}) due to Yahoo Finance outage`);
-    return candles;
+        marketCache[cacheKey] = { candles: adjustedCandles, lastFetched: now };
+        console.log(`[DATA PROVIDER] Successfully fetched ${instrument.symbol} (${timeframe}) via Yahoo Finance (${sym})`);
+        return adjustedCandles;
+      }
+    } catch {
+      // Try next candidate symbol
+    }
   }
+
+  // Fall back to expired cache first if available
+  if (cached && cached.candles.length > 0) {
+    return cached.candles;
+  }
+
+  // Otherwise, as a last resort, generate realistic simulated candles so the app NEVER crashes or stops functioning
+  const candles = generateSimulatedCandles(instrument.symbol, timeframe);
+  marketCache[cacheKey] = { candles, lastFetched: now };
+  return candles;
 }

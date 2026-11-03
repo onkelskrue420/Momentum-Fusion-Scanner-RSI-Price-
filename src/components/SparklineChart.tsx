@@ -1,4 +1,5 @@
 import { IndicatorData } from '../types';
+import { formatExactTime } from '../utils/timeFormat';
 
 interface SparklineChartProps {
   data: IndicatorData[];
@@ -291,7 +292,9 @@ export default function SparklineChart({
               )}
             </>
           )}
-          <span className="text-zinc-500">{new Date(data[hoveredIndex].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          <span className="text-zinc-500 font-medium">
+            {formatExactTime(data[hoveredIndex].timestamp, true)}
+          </span>
         </div>
       )}
     </div>

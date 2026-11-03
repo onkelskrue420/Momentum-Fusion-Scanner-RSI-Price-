@@ -1,5 +1,5 @@
 import { MarketType, Timeframe } from '../types';
-import { Search, SlidersHorizontal, ArrowUpDown, Columns, Rows } from 'lucide-react';
+import { Search, SlidersHorizontal, ArrowUpDown, Columns, Rows, Sparkles, Eye, EyeOff } from 'lucide-react';
 
 interface FilterToolbarProps {
   searchQuery: string;
@@ -20,6 +20,18 @@ interface FilterToolbarProps {
   onRsiLengthChange: (length: number) => void;
   chartsLayout: 'side-by-side' | 'stacked';
   onChartsLayoutChange: (layout: 'side-by-side' | 'stacked') => void;
+  appVersion?: 'v1' | 'v2' | 'v3' | 'v4';
+  v2MinPriceStreak?: number;
+  onV2MinPriceStreakChange?: (val: number) => void;
+  v2PriceStreakDir?: 'any' | 'above' | 'below';
+  onV2PriceStreakDirChange?: (dir: 'any' | 'above' | 'below') => void;
+  v2MinRsiStreak?: number;
+  onV2MinRsiStreakChange?: (val: number) => void;
+  v2RsiStreakDir?: 'any' | 'above' | 'below';
+  onV2RsiStreakDirChange?: (dir: 'any' | 'above' | 'below') => void;
+  hideClosedMarkets?: boolean;
+  onHideClosedMarketsChange?: (val: boolean) => void;
+  closedMarketsCount?: number;
 }
 
 const TIMEFRAMES: { value: Timeframe; label: string }[] = [
@@ -62,6 +74,18 @@ export default function FilterToolbar({
   onRsiLengthChange,
   chartsLayout,
   onChartsLayoutChange,
+  appVersion,
+  v2MinPriceStreak = 0,
+  onV2MinPriceStreakChange,
+  v2PriceStreakDir = 'any',
+  onV2PriceStreakDirChange,
+  v2MinRsiStreak = 0,
+  onV2MinRsiStreakChange,
+  v2RsiStreakDir = 'any',
+  onV2RsiStreakDirChange,
+  hideClosedMarkets = false,
+  onHideClosedMarketsChange,
+  closedMarketsCount = 0,
 }: FilterToolbarProps) {
   return (
     <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xl space-y-4" id="filter-toolbar">
@@ -244,6 +268,39 @@ export default function FilterToolbar({
           </div>
         </div>
 
+        {/* Live Markets Filter: Hide Closed / Inactive Markets */}
+        {onHideClosedMarketsChange && (
+          <div className="space-y-1.5">
+            <span className="text-[10px] uppercase font-mono font-bold tracking-wider text-zinc-500 block">
+              Market Session:
+            </span>
+            <button
+              type="button"
+              onClick={() => onHideClosedMarketsChange(!hideClosedMarkets)}
+              className={`px-3 py-1 text-xs font-mono rounded border transition duration-150 flex items-center gap-1.5 ${
+                hideClosedMarkets
+                  ? 'bg-amber-500/20 border-amber-500/80 text-amber-300 font-bold shadow-sm'
+                  : 'bg-zinc-900/30 text-zinc-400 border-zinc-900 hover:text-zinc-200 hover:border-zinc-800'
+              }`}
+              title="Hide markets which are closed or currently not trading live"
+            >
+              {hideClosedMarkets ? (
+                <EyeOff className="h-3.5 w-3.5 text-amber-400" />
+              ) : (
+                <Eye className="h-3.5 w-3.5 text-zinc-400" />
+              )}
+              <span>{hideClosedMarkets ? 'Closed Hidden' : 'Hide Closed Markets'}</span>
+              {closedMarketsCount > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                  hideClosedMarkets ? 'bg-amber-500/30 text-amber-200' : 'bg-zinc-800 text-zinc-400'
+                }`}>
+                  {closedMarketsCount}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
+
         {/* Sliders Container */}
         <div className="flex flex-col sm:flex-row gap-4 items-center flex-grow max-w-xl sm:ml-auto w-full sm:w-auto">
           {/* Score Threshold */}
@@ -281,6 +338,95 @@ export default function FilterToolbar({
           </div>
         </div>
       </div>
+
+      {/* VERSION 2: MA RESPECT TREND STREAK SCAN OPTIONS */}
+      {appVersion === 'v2' && (
+        <div className="border-t border-emerald-900/40 bg-emerald-950/15 rounded-xl p-3.5 space-y-3 font-sans">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-emerald-400 flex-shrink-0 animate-pulse" />
+              <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider font-mono">
+                Version 2 Trend Respect Scanner: Moving Average Persistence
+              </span>
+            </div>
+            <span className="text-[10px] text-zinc-500 font-mono">
+              Filters setups where Price or RSI has respected the MA for X consecutive time intervals
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Price MA Respect Filter */}
+            <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 space-y-2">
+              <div className="flex justify-between items-center text-xs font-mono">
+                <span className="text-zinc-300 font-semibold flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-amber-400"></span>
+                  Price MA Respect Streak:
+                </span>
+                <span className="text-amber-400 font-bold bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
+                  {v2MinPriceStreak > 0 ? `≥ ${v2MinPriceStreak} candles` : 'Disabled (Any)'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="0"
+                  max="30"
+                  step="1"
+                  value={v2MinPriceStreak}
+                  onChange={(e) => onV2MinPriceStreakChange && onV2MinPriceStreakChange(parseInt(e.target.value))}
+                  className="flex-grow accent-amber-500 h-1.5 bg-zinc-800 rounded cursor-pointer"
+                />
+
+                <select
+                  value={v2PriceStreakDir}
+                  onChange={(e) => onV2PriceStreakDirChange && onV2PriceStreakDirChange(e.target.value as any)}
+                  className="bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-300 font-mono focus:outline-none focus:border-amber-500"
+                >
+                  <option value="any">Either (Above/Below)</option>
+                  <option value="above">Above MA ↑</option>
+                  <option value="below">Below MA ↓</option>
+                </select>
+              </div>
+            </div>
+
+            {/* RSI MA Respect Filter */}
+            <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 space-y-2">
+              <div className="flex justify-between items-center text-xs font-mono">
+                <span className="text-zinc-300 font-semibold flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-violet-400"></span>
+                  RSI MA Respect Streak:
+                </span>
+                <span className="text-violet-400 font-bold bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
+                  {v2MinRsiStreak > 0 ? `≥ ${v2MinRsiStreak} candles` : 'Disabled (Any)'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="0"
+                  max="30"
+                  step="1"
+                  value={v2MinRsiStreak}
+                  onChange={(e) => onV2MinRsiStreakChange && onV2MinRsiStreakChange(parseInt(e.target.value))}
+                  className="flex-grow accent-violet-500 h-1.5 bg-zinc-800 rounded cursor-pointer"
+                />
+
+                <select
+                  value={v2RsiStreakDir}
+                  onChange={(e) => onV2RsiStreakDirChange && onV2RsiStreakDirChange(e.target.value as any)}
+                  className="bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1 text-xs text-zinc-300 font-mono focus:outline-none focus:border-violet-500"
+                >
+                  <option value="any">Either (Above/Below)</option>
+                  <option value="above">Above MA ↑</option>
+                  <option value="below">Below MA ↓</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

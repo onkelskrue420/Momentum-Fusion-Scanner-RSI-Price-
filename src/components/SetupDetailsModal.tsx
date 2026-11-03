@@ -1,5 +1,7 @@
+import React, { useState, useEffect } from 'react';
 import { SetupAnalysis, Timeframe } from '../types';
-import { X, ExternalLink, ShieldCheck, HelpCircle, Activity, Info } from 'lucide-react';
+import { X, ExternalLink, ShieldCheck, HelpCircle, Activity, Info, Clock, AlertCircle } from 'lucide-react';
+import { getMarketActivity } from '../utils/timeFormat';
 
 interface SetupDetailsModalProps {
   setup: SetupAnalysis;
@@ -41,6 +43,19 @@ export function getTradingViewInterval(tf: Timeframe): string {
 }
 
 export default function SetupDetailsModal({ setup, onClose }: SetupDetailsModalProps) {
+  const [now, setNow] = useState<number>(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const lastCandleTimestamp = setup.dataPoints && setup.dataPoints.length > 0
+    ? setup.dataPoints[setup.dataPoints.length - 1].timestamp
+    : undefined;
+
+  const marketInfo = getMarketActivity(lastCandleTimestamp, setup.timeframe, now);
+
   const tvSymbol = getTradingViewSymbol(setup.symbol);
   const tvInterval = getTradingViewInterval(setup.timeframe);
 
@@ -56,10 +71,10 @@ export default function SetupDetailsModal({ setup, onClose }: SetupDetailsModalP
       <div className="relative w-full max-w-6xl h-[90vh] bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         
         {/* MODAL HEADER */}
-        <div className="flex items-center justify-between p-4 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md">
           <div className="flex items-center gap-3">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl font-bold text-zinc-100">{setup.symbol} Analysis</h2>
                 <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-violet-950 border border-violet-800 text-violet-300 uppercase tracking-wider">
                   {setup.timeframe} Setup
@@ -67,6 +82,37 @@ export default function SetupDetailsModal({ setup, onClose }: SetupDetailsModalP
                 <span className="text-xs font-mono text-zinc-500 hidden sm:inline">
                   {setup.displayName}
                 </span>
+
+                {/* Market Live/Closed Indicator & Candle Time Badge */}
+                <div className={`px-2.5 py-0.5 rounded-lg border text-xs font-mono flex items-center gap-2 ${marketInfo.statusColor}`}>
+                  {marketInfo.isMarketOpen ? (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span className="font-bold">LIVE</span>
+                      <span className="opacity-40">•</span>
+                      <span>Last Bar: <strong>{marketInfo.lastCandleTimeStr}</strong></span>
+                      <span className="text-[10px] bg-emerald-900/60 px-1.5 py-0.2 rounded border border-emerald-400/30">
+                        {marketInfo.elapsedStr}
+                      </span>
+                      {marketInfo.nextBarCountdownStr !== '—' && (
+                        <span className="flex items-center gap-1 text-cyan-300">
+                          <Clock className="h-3 w-3" />
+                          Next: <strong>{marketInfo.nextBarCountdownStr}</strong>
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-amber-400"></span>
+                      <span className="font-bold">CLOSED</span>
+                      <span className="opacity-40">•</span>
+                      <span>Last Bar: <strong>{marketInfo.lastCandleTimeStr}</strong></span>
+                      <span className="text-[10px] bg-amber-900/60 text-amber-200 px-1.5 py-0.2 rounded border border-amber-400/30">
+                        Closed {marketInfo.elapsedStr}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
               <p className="text-xs text-zinc-400 mt-0.5 font-light">
                 Momentum scanning model: <strong className="text-zinc-300 font-semibold">{setup.setupQualityDesc}</strong>
@@ -94,6 +140,16 @@ export default function SetupDetailsModal({ setup, onClose }: SetupDetailsModalP
             </button>
           </div>
         </div>
+
+        {/* Closed market banner in modal if stationary */}
+        {!marketInfo.isMarketOpen && (
+          <div className="bg-amber-950/30 border-b border-amber-900/40 px-4 py-1.5 text-xs font-mono text-amber-300 flex items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
+            <span>
+              Exchange currently closed for {setup.symbol}. Last candle printed at <strong>{marketInfo.lastCandleTimeStr}</strong> ({marketInfo.elapsedStr}). Live quote streaming resumes during standard session hours.
+            </span>
+          </div>
+        )}
 
         {/* MODAL BODY */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden bg-zinc-950">
@@ -131,6 +187,41 @@ export default function SetupDetailsModal({ setup, onClose }: SetupDetailsModalP
                   Direction: <strong className="text-zinc-200">{setup.direction}</strong>
                 </div>
               </div>
+
+              {/* MA Trend Respect & Persistence Streaks */}
+              {setup.priceMa1Streak !== undefined && (
+                <div className="bg-zinc-900/60 border border-zinc-800 p-3.5 rounded-xl space-y-2 font-mono">
+                  <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">
+                    Moving Average Trend Respect Streaks
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-zinc-950 p-2 rounded border border-zinc-900">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Price vs MA1</span>
+                      <span className="font-bold text-amber-300">
+                        {setup.priceMa1Streak} candles ({setup.priceMa1StreakDir})
+                      </span>
+                    </div>
+                    <div className="bg-zinc-950 p-2 rounded border border-zinc-900">
+                      <span className="text-[10px] text-zinc-500 uppercase block">Price vs MA2</span>
+                      <span className="font-bold text-amber-300">
+                        {setup.priceMa2Streak} candles ({setup.priceMa2StreakDir})
+                      </span>
+                    </div>
+                    <div className="bg-zinc-950 p-2 rounded border border-zinc-900">
+                      <span className="text-[10px] text-zinc-500 uppercase block">RSI vs RSI MA1</span>
+                      <span className="font-bold text-violet-300">
+                        {setup.rsiMa1Streak} candles ({setup.rsiMa1StreakDir})
+                      </span>
+                    </div>
+                    <div className="bg-zinc-950 p-2 rounded border border-zinc-900">
+                      <span className="text-[10px] text-zinc-500 uppercase block">RSI vs RSI MA2</span>
+                      <span className="font-bold text-violet-300">
+                        {setup.rsiMa2Streak} candles ({setup.rsiMa2StreakDir})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Mathematical Metrics breakdown */}
               <div className="space-y-4">
